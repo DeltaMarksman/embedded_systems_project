@@ -37,6 +37,8 @@
 
 #include <msp430.h>
 
+//Amanda Amelia Lugo
+
 void main(void)
 {
     WDTCTL = WDTPW | WDTHOLD;   // stop watchdog timer
