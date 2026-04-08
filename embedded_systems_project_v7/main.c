@@ -184,6 +184,8 @@ void config_ACLK_to_32KHz_crystal(void) {
     return;
 }
 
+
+// DANIEL VU 04 08 2026
 unsigned long prng_state;
 unsigned int random_number(int max) {
     //https://en.wikipedia.org/wiki/Linear_congruential_generator
@@ -191,9 +193,37 @@ unsigned int random_number(int max) {
     return abs((unsigned int)(prng_state >> 16)) % max;
 }
 
-// Will determine the sequence of the notes to play from 1-7
-int* choose_sequence() {
+// DANIEL VU 04 08 2026
+void setup_prng() {
+    // Setup clock
+    // Use ACLK, divide by 1, continuous mode, clear TAR
+    TA0CTL = TASSEL_1 | ID_0 | MC_2 | TACLR;
+    int i = 0;
+    for (i = 0; i < 20000; i++) {}
 
+    // Since ACLK is not configed, and using for loop, value of TA0R is undeterministic
+    // We can use this for the random seed.
+    prng_state = TA0R;
+}
+
+// Will determine the sequence of the notes to play from 1-7
+// DANIEL VU 04 08 2026
+void generate_sequence(int sequence[]) {
+    int i;
+    for (i = 0; i < 32; i++) {
+        // Ensure no duplicates
+        while (i > 0 && sequence[i] == sequence[i-1]) {
+            sequence[i] = random_number(7);
+        }
+    }
+
+    static const int print = 1;
+    if (!print) return;
+
+    for (i = 0; i < 7; i++) {
+        uart_write_uint16(sequence[i]);
+        uart_newline();
+    }
 }
 
 void main(void)
@@ -202,25 +232,13 @@ void main(void)
     PM5CTL0 &= ~LOCKLPM5; // Disable GPIO power-on default high-impedance mode
 
     Initialize_UART();
-
-    // Setup clock
-    // Use ACLK, divide by 1, continuous mode, clear TAR
-    TA0CTL = TASSEL_1 | ID_0 | MC_2 | TACLR;
-    int i = 0;
-    for (i = 0; i < 20000; i++) {}
-    prng_state = TA0R;
-
-    // Get random seed
-    uart_write_string("Random number test\n");
-    for (i = 0; i < 200; i++) {
-        int rand = random_number(7);
-        uart_write_uint16(rand);
-        uart_newline();
-    }
-
-
+    setup_prng();
     config_ACLK_to_32KHz_crystal();
 
-
+    // DANIEL VU 04 08 2026
+    // Generate sequence of 32 notes. Use as many as needed up to 32
+    int sequence[32] = {0};
+    generate_sequence(sequence);
+    BUZ1;
 
 }
