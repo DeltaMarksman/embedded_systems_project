@@ -154,20 +154,20 @@ void clock_system_initialize_16MHz(void)
 
 void adc_initialize(void)
 {
-    // Configure Pins: P9.2 (A10) and P8.2 (A6)
+    // Configure Pins: P9.2 (A10) and P8.7 (A4)
     P9SEL1 |= BIT2;  P9SEL0 |= BIT2;
-    P8SEL1 |= BIT2;  P8SEL0 |= BIT2;
+    P8SEL1 |= BIT7;  P8SEL0 |= BIT7;
 
     ADC12CTL0 &= ~ADC12ENC;
     // SHT_7 = 192 cycles for sampling (more stable), MSC = Multiple Sample Conversion
     ADC12CTL0  = ADC12ON | ADC12SHT0_7 | ADC12MSC;
-    // CONSEQ_1 = Sequence of channels A10 then A6
+    // CONSEQ_1 = Sequence of channels A10 then A4
     ADC12CTL1  = ADC12SHP | ADC12CONSEQ_1;
     ADC12CTL2  = ADC12RES_2; // 12-bit resolution
 
-    // Map Memory 0 to A10 (X) and Memory 1 to A6 (Y)
+    // Map Memory 0 to A10 (X) and Memory 1 to A4 (Y)
     ADC12MCTL0 = ADC12INCH_10;
-    ADC12MCTL1 = ADC12INCH_6 | ADC12EOS; // EOS = End of Sequence
+    ADC12MCTL1 = ADC12INCH_4 | ADC12EOS; // EOS = End of Sequence
 
     ADC12CTL0 |= ADC12ENC;
 }
