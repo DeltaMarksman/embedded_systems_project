@@ -185,15 +185,15 @@ void config_ACLK_to_32KHz_crystal(void) {
 }
 
 
-// DANIEL VU 04 08 2026
+
 unsigned long prng_state;
 unsigned int random_number(int max) {
     //https://en.wikipedia.org/wiki/Linear_congruential_generator
-    prng_state = (1664525 * prng_state + 1013904223);
-    return abs((unsigned int)(prng_state >> 16)) % max;
+    prng_state = (1664525UL * prng_state + 1013904223UL);
+    return abs(prng_state) % max;
 }
 
-// DANIEL VU 04 08 2026
+
 void setup_prng() {
     // Setup clock
     // Use ACLK, divide by 1, continuous mode, clear TAR
@@ -238,18 +238,86 @@ void generate_sequence(int this_sequence[32][3]) {
     }
 }
 
+/*
+ * Clock cycles is found by dividing 32khz by frequency *2 (square wave)
+ * */
+int note_to_clk_cycles_32KHZ[7] = {
+    37, // A4
+    33, // B4
+    31, // C5
+    28, // D5
+    25, // E5
+    23, // F5
+    21  // G5
+};
+
+void config_clk() {
+    // Configure Channel 0 for up mode with interrupts
+    TA0CCR0 = note_to_clk_cycles_32KHZ[0]; //@ 32KHz, 1 second = 2^16
+    TA0CCTL0 |= CCIE;
+    TA0CCTL0 &= ~CCIFG;
+
+    // Configure Timer_A
+    // Use ACLK, divide by 1, up mode, TAR cleared
+    TA0CTL = TASSEL_1 | ID_0 | MC_0 | TACLR ;
+}
+
+void config_piezo() {
+    P2DIR  |= BIT7;
+}
+
+void play_note(int note) {
+    // Turn timer on
+    TA0CTL |= MC_1;
+    TA0CCR0 = note_to_clk_cycles_32KHZ[note];
+}
+
+void stop_note() {
+    // Turn timer off
+    TA0CTL = (TA0CTL & ~MC_3);
+}
+
+void play_round() {
+    // Generate sequence
+    unsigned int sequence[3] = {0};
+    generate_sequence(sequence);
+
+    // play sequence
+    int i;
+    for (i = 0; i < 3; i++) {
+        play_note(sequence[i]);
+        _delay_cycles(500000);
+        stop_note();
+        _delay_cycles(500000);
+    }
+
+}
+
 void main(void)
 {
     WDTCTL = WDTPW | WDTHOLD;   // stop watchdog timer
     PM5CTL0 &= ~LOCKLPM5; // Disable GPIO power-on default high-impedance mode
 
+    // UART
     Initialize_UART();
+
+    // Generate sequence of 3 notes. Use as many as needed=
     setup_prng();
+
+    // Init clk and piezo
     config_ACLK_to_32KHz_crystal();
+    config_clk();
+    config_piezo(); // Default tone of 440
+    _enable_interrupts();
 
     // DANIEL VU 04 08 2026
     // Generate sequence of 32 notes. Use as many as needed up to 32
     int sequence[32][3] = {0};
     generate_sequence(sequence);
 
+//******* Writing the ISR *******
+#pragma vector = TIMER0_A0_VECTOR // Link the ISR to the vector
+__interrupt void T0A0_ISR() {
+    // Interrupt response goes here
+    P2OUT ^= BIT7; // toggle piezo which gives square wave
 }
