@@ -35,7 +35,8 @@
 // Texas Instruments, Inc.
 // ******************************************************************************
 
-#include <msp430.h>
+#include "msp430fr6989.h"
+#include <stdint.h>
 
 #define FLAGS UCA1IFG // Contains the transmit & receive flags
 #define RXFLAG UCRXIFG // Receive flag
@@ -44,6 +45,40 @@
 #define RXBUFFER UCA1RXBUF // Receive buffer
 #define true 1
 #define false 0
+
+
+// VT100 terminal escape codes
+#define VT100_CURSOR_OFF  "\033[?25l"
+#define VT100_CLEAR_LINE  "\033[2K\r"
+#define COLOR_RED         "\033[31m"
+#define COLOR_GREEN       "\033[32m"
+#define COLOR_YELLOW      "\033[33m"
+#define COLOR_EXIT        "\033[0m"
+
+// Joystick status bitmasks
+#define IDL  0x01
+#define LOW  0x02
+#define MED  0x04
+#define HIG  0x08
+#define POS  0x10
+#define NEG  0x20
+
+// Deflection thresholds
+#define LOW_THRESHOLD  3
+#define MED_THRESHOLD  40
+#define HIG_THRESHOLD  80
+
+// Globals
+volatile uint16_t result_x, result_y;
+volatile uint16_t delta_x,  delta_y;
+volatile uint8_t  status_x, status_y;
+volatile uint8_t  update_flag = 0; // Flag to trigger screen update
+volatile uint8_t joystick_moved = 0;
+
+// Prototypes
+void clock_system_initialize_16MHz(void);
+void adc_initialize(void);
+void update_screen(void);
 
 void uart_write_char(unsigned char ch){
     // Wait for any ongoing transmission to complete
@@ -138,32 +173,34 @@ char* uart_read_string()
 // Configure UART to the popular configuration
 // 9600 baud, 8-bit data, LSB first, no parity bits, 1 stop bit
 // no flow control, oversampling reception
-// Clock: SMCLK @ 1 MHz (1,000,000 Hz)
+// Clock: 16 MHz (16,000,000 Hz)
 void Initialize_UART(void){
-    // Configure pins to UART functionality
-    P3SEL1 &= ~(BIT4|BIT5);
-    P3SEL0 |= (BIT4|BIT5);
+    P3SEL0 |=  BIT4 | BIT5; // USCI_A1 UART pins
+    P3SEL1 &= ~(BIT4 | BIT5);
 
-    // Main configuration register
-    UCA1CTLW0 = UCSWRST; // Engage reset; change all the fields to zero
+    UCA1CTLW0 = UCSWRST;
+    UCA1CTLW0 |= UCSSEL__SMCLK;
 
-    // Most fields in this register, when set to zero, correspond to the
-    // popular configuration
-    UCA1CTLW0 |= UCSSEL_2; // Set clock to SMCLK
+    // 16,000,000 / 9600 = 1666.666
+    // Using Oversampling (UCOS16 = 1):
+    // 1666.666 / 16 = 104.166 -> UCBR = 104
+    // Fractional portion 0.166 -> UCBRF = 2 (from table)
+    UCA1BRW    = 104;
+    UCA1MCTLW  = 0xD600 | UCOS16 | UCBRF_2; // 0xD6 is UCBRS = 0xD6
 
-    // Configure the clock dividers and modulators (and enable oversampling)
-    UCA1BRW = 6; // divider
-
-    // Modulators: UCBRF = 8 = 1000 --> UCBRF3 (bit #3)
-    // UCBRS = 0x20 = 0010 0000 = UCBRS5 (bit #5)
-    UCA1MCTLW = UCBRF3 | UCBRS5 | UCOS16;
-
-    // Exit the reset state
     UCA1CTLW0 &= ~UCSWRST;
 }
 
-//**********************************
-// Configures ACLK to 32 KHz crystal
+void clock_system_initialize_16MHz(void)
+{
+    FRCTL0  = FRCTLPW | NWAITS_1;
+    CSCTL0  = CSKEY;
+    CSCTL1  = DCOFSEL_4 | DCORSEL; // Set DCO to 16MHz
+    CSCTL2  = SELA__LFXTCLK | SELS__DCOCLK | SELM__DCOCLK;
+    CSCTL3  = DIVA__1 | DIVS__1 | DIVM__1; // No dividers = SMCLK @ 16MHz
+    CSCTL0_H = 0;
+}
+
 void config_ACLK_to_32KHz_crystal(void) {
     // By default, ACLK runs on LFMODCLK at 5MHz/128 = 39 KHz
 
@@ -184,6 +221,33 @@ void config_ACLK_to_32KHz_crystal(void) {
     return;
 }
 
+void adc_initialize(void)
+{
+    // Configure Pins: P9.2 (A10) and P8.7 (A4)
+    P9SEL1 |= BIT2;  P9SEL0 |= BIT2;
+    P8SEL1 |= BIT7;  P8SEL0 |= BIT7;
+
+    ADC12CTL0 &= ~ADC12ENC;
+    // SHT_7 = 192 cycles for sampling (more stable), MSC = Multiple Sample Conversion
+    ADC12CTL0  = ADC12ON | ADC12SHT0_7 | ADC12MSC;
+    // CONSEQ_1 = Sequence of channels A10 then A4
+    ADC12CTL1  = ADC12SHP | ADC12CONSEQ_1;
+    ADC12CTL2  = ADC12RES_2; // 12-bit resolution
+
+    // Map Memory 0 to A10 (X) and Memory 1 to A4 (Y)
+    ADC12MCTL0 = ADC12INCH_10;
+    ADC12MCTL1 = ADC12INCH_4 | ADC12EOS; // EOS = End of Sequence
+
+    ADC12CTL0 |= ADC12ENC;
+
+    ADC12IER0 |= ADC12IE0 | ADC12IE1;
+
+    // Timer for ADC Trigger (~10Hz)
+    TA0CCR0   = 3276;
+    TA0CCTL0 |= CCIE;
+    TA0CTL    = TASSEL_1 | MC_1 | TACLR;
+}
+
 
 
 unsigned long prng_state;
@@ -195,15 +259,7 @@ unsigned int random_number(int max) {
 
 
 void setup_prng() {
-    // Setup clock
-    // Use ACLK, divide by 1, continuous mode, clear TAR
-    TA0CTL = TASSEL_1 | ID_0 | MC_2 | TACLR;
-    int i = 0;
-    for (i = 0; i < 20000; i++) {}
-
-    // Since ACLK is not configed, and using for loop, value of TA0R is undeterministic
-    // We can use this for the random seed.
-    prng_state = TA0R;
+    prng_state = 0;
 }
 
 // Will determine the sequence of the notes to play from 1-7
@@ -233,25 +289,25 @@ void generate_sequence(unsigned int sequence[]) {
 /*
  * Clock cycles is found by dividing 32khz by frequency *2 (square wave)
  * */
-int note_to_clk_cycles_32KHZ[7] = {
-    37, // A4
-    33, // B4
-    31, // C5
-    28, // D5
-    25, // E5
-    23, // F5
-    21  // G5
+int note_to_clk_cycles_16MHZ[7] = {
+    18181, // A4
+    16200, // B4
+    15288, // C5
+    13619, // D5
+    12133, // E5
+    11448, // F5
+    10200  // G5
 };
 
 void config_clk() {
     // Configure Channel 0 for up mode with interrupts
-    TA0CCR0 = note_to_clk_cycles_32KHZ[0]; //@ 32KHz, 1 second = 2^16
-    TA0CCTL0 |= CCIE;
-    TA0CCTL0 &= ~CCIFG;
+    TB0CCR0 = note_to_clk_cycles_16MHZ[0]; //@ 32KHz, 1 second = 2^16
+    TB0CCTL0 |= CCIE;
+    TB0CCTL0 &= ~CCIFG;
 
     // Configure Timer_A
-    // Use ACLK, divide by 1, up mode, TAR cleared
-    TA0CTL = TASSEL_1 | ID_0 | MC_0 | TACLR ;
+    // Use SMCLK, divide by 1, up mode, TAR cleared
+    TB0CTL = TBSSEL_2 | ID_0 | MC_0 | TBCLR ;
 }
 
 void config_piezo() {
@@ -260,13 +316,13 @@ void config_piezo() {
 
 void play_note(int note) {
     // Turn timer on
-    TA0CTL |= MC_1;
-    TA0CCR0 = note_to_clk_cycles_32KHZ[note];
+    TB0CTL |= MC_1;
+    TB0CCR0 = note_to_clk_cycles_16MHZ[note];
 }
 
 void stop_note() {
     // Turn timer off
-    TA0CTL = (TA0CTL & ~MC_3);
+    TB0CTL = (TB0CTL & ~MC_3);
 }
 
 void play_round() {
@@ -289,9 +345,9 @@ void play_round() {
 
 
         play_note(sequence[i]);
-        _delay_cycles(500000);
+        _delay_cycles(5000000);
         stop_note();
-        _delay_cycles(500000);
+        _delay_cycles(5000000);
     }
 
     // Return the answers
@@ -309,24 +365,71 @@ void main(void)
     WDTCTL = WDTPW | WDTHOLD;   // stop watchdog timer
     PM5CTL0 &= ~LOCKLPM5; // Disable GPIO power-on default high-impedance mode
 
-    // UART
-    Initialize_UART();
-
     // Generate sequence of 3 notes. Use as many as needed
     setup_prng();
 
     // Init clk and piezo
-    config_ACLK_to_32KHz_crystal();
+    clock_system_initialize_16MHz();
+
+
+    // Uart and piezo
+    Initialize_UART();
     config_clk();
     config_piezo(); // Default tone of 440
+
+    // ADC
+    adc_initialize();
+
     _enable_interrupts();
 
     play_round();
+
+    while (1) {
+        if (status_y & HIG) {
+            uart_write_string((status_y & POS) ? "Up  " : "Down");
+        }
+    }
 }
 
-//******* Writing the ISR *******
-#pragma vector = TIMER0_A0_VECTOR // Link the ISR to the vector
-__interrupt void T0A0_ISR() {
+//******* PIEZO SQUARE WAVE *******
+#pragma vector = TIMER0_B0_VECTOR // Link the ISR to the vector
+__interrupt void T0B0_ISR() {
     // Interrupt response goes here
     P2OUT ^= BIT7; // toggle piezo which gives square wave
+}
+
+
+//******* UPDATE ADC *******
+#pragma vector = TIMER0_A0_VECTOR
+__interrupt void TA0_A0_ISR(void)
+{
+    ADC12CTL0 |= ADC12SC; // Trigger ADC
+}
+
+#pragma vector = ADC12_VECTOR
+__interrupt void ADC12_ISR(void)
+{
+    if (ADC12IFGR0 & ADC12IFG0)
+    {
+        result_x = (uint16_t)(((uint32_t)ADC12MEM0 * 25) >> 9);
+        delta_x  = (result_x >= 100) ? result_x - 100 : 100 - result_x;
+        status_x = 0;
+        if      (result_x > 100 + LOW_THRESHOLD) status_x |= POS;
+        else if (result_x < 100 - LOW_THRESHOLD) status_x |= NEG;
+        if      (delta_x > HIG_THRESHOLD) status_x |= HIG;
+        else if (delta_x > MED_THRESHOLD) status_x |= MED;
+        else                              status_x |= LOW;
+    }
+
+    if (ADC12IFGR0 & ADC12IFG1)
+    {
+        result_y = (uint16_t)(((uint32_t)ADC12MEM1 * 25) >> 9);
+        delta_y  = (result_y >= 100) ? result_y - 100 : 100 - result_y;
+        status_y = 0;
+        if      (result_y > 100 + LOW_THRESHOLD) status_y |= POS;
+        else if (result_y < 100 - LOW_THRESHOLD) status_y |= NEG;
+        if      (delta_y > HIG_THRESHOLD) status_y |= HIG;
+        else if (delta_y > MED_THRESHOLD) status_y |= MED;
+        else                              status_y |= LOW;
+    }
 }
