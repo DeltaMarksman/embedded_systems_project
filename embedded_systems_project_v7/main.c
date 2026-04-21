@@ -207,34 +207,26 @@ void setup_prng() {
 }
 
 // Will determine the sequence of the notes to play from 1-7
-// DANIEL VU 04 08 2026
-void generate_sequence(int this_sequence[32][3]) {
-    int sequence;
-    int sequence_index;
-    for (sequence = 0; sequence < 32; sequence++) {
-        for (sequence_index = 0; sequence_index < 3; sequence_index++) {
-            this_sequence[sequence][sequence_index] = random_number(7);
 
-            // Ensure no duplicates
-            if (sequence_index > 0 && (this_sequence[sequence][sequence_index] == this_sequence[sequence][sequence_index-1])) {
-                
-            }
+void generate_sequence(unsigned int sequence[]) {
+    int i;
+    for (i = 0; i < 3; i++) {
+        sequence[i] = random_number(7);
+
+        // Ensure no duplicates
+        if (i > 0 && sequence[i] == sequence[i-1]) {
+            // repeat loop without increment
+            i--;
+            continue;
         }
     }
 
-    static const int print = 1;
+    static const int print = 0;
     if (!print) return;
 
-    for (sequence = 0; sequence < 32; sequence++) {
-        for (sequence_index = 0; sequence_index < 3; sequence_index++) {
-            uart_write_string("Sequence ");
-            uart_write_uint16(sequence);
-            uart_write_string(" Index ");
-            uart_write_uint16(sequence_index);
-            uart_write_string(" : ");
-            uart_write_uint16(this_sequence[sequence][sequence_index]);
-            uart_newline();
-        }
+    for (i = 0; i < 3; i++) {
+        uart_write_uint16(sequence[i]);
+        uart_newline();
     }
 }
 
@@ -282,14 +274,33 @@ void play_round() {
     unsigned int sequence[3] = {0};
     generate_sequence(sequence);
 
+    // Generate answers
+    int answer[2] = {sequence[1] > sequence[0], sequence[2] > sequence[1]};
+
+
+
     // play sequence
     int i;
     for (i = 0; i < 3; i++) {
+        // Printing
+        uart_write_string("Playing note: ");
+        uart_write_uint16(sequence[i]);
+        uart_newline();
+
+
         play_note(sequence[i]);
         _delay_cycles(500000);
         stop_note();
         _delay_cycles(500000);
     }
+
+    // Return the answers
+    uart_write_string("Correct Answer is: ");
+    uart_write_uint16(answer[0]);
+    uart_write_string(", ");
+    uart_write_uint16(answer[1]);
+    uart_newline();
+
 
 }
 
@@ -301,7 +312,7 @@ void main(void)
     // UART
     Initialize_UART();
 
-    // Generate sequence of 3 notes. Use as many as needed=
+    // Generate sequence of 3 notes. Use as many as needed
     setup_prng();
 
     // Init clk and piezo
@@ -310,10 +321,8 @@ void main(void)
     config_piezo(); // Default tone of 440
     _enable_interrupts();
 
-    // DANIEL VU 04 08 2026
-    // Generate sequence of 32 notes. Use as many as needed up to 32
-    int sequence[32][3] = {0};
-    generate_sequence(sequence);
+    play_round();
+}
 
 //******* Writing the ISR *******
 #pragma vector = TIMER0_A0_VECTOR // Link the ISR to the vector
