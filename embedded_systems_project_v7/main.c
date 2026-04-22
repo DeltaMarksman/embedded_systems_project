@@ -390,7 +390,7 @@ void display_incorrect() {
 void display_final_results(int num_correct) {
     char buff[10];
     sprintf(buff, "%d", num_correct);
-    Graphics_drawStringCentered(&g_sContext,(int8_t*)num_correct, AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
+    Graphics_drawStringCentered(&g_sContext,(int8_t*)buff, AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
 }
 
 void main(void)
