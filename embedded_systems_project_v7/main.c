@@ -36,7 +36,11 @@
 // ******************************************************************************
 
 #include "msp430fr6989.h"
+#include "Grlib/grlib/grlib.h"
+#include "LcdDriver/lcd_driver.h"
 #include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 #define FLAGS UCA1IFG // Contains the transmit & receive flags
 #define RXFLAG UCRXIFG // Receive flag
