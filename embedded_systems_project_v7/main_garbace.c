@@ -30,6 +30,7 @@ int note_to_clk_cycles_16MHZ[7] = {18181, 16200, 15288, 13619, 12133, 11448, 102
 
 typedef enum {
     CHOOSING_ROUNDS,
+    STARTING_GAME,
     PLAYING_NOTES,
     WAITING_ON_ANSWER,
     DISPLAY_FEEDBACK,
