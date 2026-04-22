@@ -1,320 +1,83 @@
-//my garabge rendition attempts of things 
-
-/* --COPYRIGHT--,BSD
- * Copyright (c) 2020, Texas Instruments Incorporated
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * *  Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *
- * *  Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * *  Neither the name of Texas Instruments Incorporated nor the names of
- *    its contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
- * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
- * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
- * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
- * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
- * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * --/COPYRIGHT--*/
-//*****************************************************************************
-//         GUI Composer Simple JSON Demo using MSP430
-//
-// Texas Instruments, Inc.
-// ******************************************************************************
-
 #include "msp430fr6989.h"
-#include "Grlib/grlib/grlib.h"          // Graphics library (grlib)
-#include "LcdDriver/lcd_driver.h"       // LCD driver
+#include "Grlib/grlib/grlib.h"
+#include "LcdDriver/lcd_driver.h"
 #include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
 
-#define FLAGS UCA1IFG // Contains the transmit & receive flags
-#define RXFLAG UCRXIFG // Receive flag
-#define TXFLAG UCTXIFG // Transmit flag
-#define TXBUFFER UCA1TXBUF // Transmit buffer
-#define RXBUFFER UCA1RXBUF // Receive buffer
-#define true 1
-#define false 0
-
-
-// VT100 terminal escape codes
-#define VT100_CURSOR_OFF  "\033[?25l"
-#define VT100_CLEAR_LINE  "\033[2K\r"
-#define COLOR_RED         "\033[31m"
-#define COLOR_GREEN       "\033[32m"
-#define COLOR_YELLOW      "\033[33m"
-#define COLOR_EXIT        "\033[0m"
-
-// Joystick status bitmasks
-#define IDL  0x01
-#define LOW  0x02
-#define MED  0x04
-#define HIG  0x08
+//joystick bit masks
 #define POS  0x10
 #define NEG  0x20
-
-// Deflection thresholds
 #define LOW_THRESHOLD  3
-#define MED_THRESHOLD  40
-#define HIG_THRESHOLD  80
 
-//Define buttons
-#define BUT1 BIT1 // Button S1 at Port 1.1
-#define BUT2 BIT2 // Button S2 at Port 1.2
+//buttons
+#define BUT1 BIT1 //S1 when pressed after user as indicated number of rounds will initiate the game rounds
+#define BUT2 BIT2 //S2 when pressed allows user to start over to start menu
 
 // Globals
 volatile uint16_t result_x, result_y;
-volatile uint16_t delta_x,  delta_y;
 volatile uint8_t  status_x, status_y;
-volatile uint8_t  update_flag = 0; // Flag to trigger screen update
+volatile uint8_t  update_flag = 0;
 volatile uint8_t joystick_moved = 0;
 volatile uint8_t rounds =0;
 volatile uint8_t button_state = 0;
 volatile uint8_t button2_state = 0;
-volatile uint8_t joystick_setting = 0;
+volatile uint8_t game_start = 0;
 volatile uint8_t score = 0;
 volatile int user_answer[2] = {0};
-Graphics_Context g_sContext;        // Declare a graphic library context
+Graphics_Context g_sContext;
+int note_to_clk_cycles_16MHZ[7] = {18181, 16200, 15288, 13619, 12133, 11448, 10200};
+unsigned int sequence[3] = {0};
+unsigned int answer[2] = {0};
 
-// Prototypes
-void clock_system_initialize_16MHz(void);
-void adc_initialize(void);
-void update_screen(void);
+//clock for what??
+void Initialize_Clock_System() {
+  // DCO frequency = 16 MHz
+  // MCLK = fDCO/1 = 16 MHz
+  // SMCLK = fDCO/1 = 16 MHz
 
-void uart_write_char(unsigned char ch){
-    // Wait for any ongoing transmission to complete
-    while ( (FLAGS & TXFLAG)==0 ) {}
+  // Activate memory wait state
+  FRCTL0 = FRCTLPW | NWAITS_1;    // Wait state=1
+  CSCTL0 = CSKEY;
+  // Set DCOFSEL to 4 (3-bit field)
+  CSCTL1 &= ~DCOFSEL_7;
+  CSCTL1 |= DCOFSEL_4;
+  // Set DCORSEL to 1 (1-bit field)
+  CSCTL1 |= DCORSEL;
+  // Change the dividers to 0 (div by 1)
+  CSCTL3 &= ~(DIVS2|DIVS1|DIVS0);    // DIVS=0 (3-bit)
+  CSCTL3 &= ~(DIVM2|DIVM1|DIVM0);    // DIVM=0 (3-bit)
+  CSCTL0_H = 0;
 
-    // Copy the byte to the transmit buffer
-    TXBUFFER = ch; // Tx flag goes to 0 and Tx begins!
-
-    return;
+  return;
 }
-
-void uart_newline() {
-    uart_write_char('\n');
-    uart_write_char('\r');
+//graphics
+void set_graphics() {
+    Crystalfontz128x128_Init();
+    Crystalfontz128x128_SetOrientation(0);
+    Graphics_initContext(&g_sContext, &g_sCrystalfontz128x128);
+    Graphics_setBackgroundColor(&g_sContext, GRAPHICS_COLOR_BLACK);
+    Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_WHITE);
+    GrContextFontSet(&g_sContext, &g_sFontFixed6x8);
+    Graphics_clearDisplay(&g_sContext);
 }
-
-void uart_write_uint16(unsigned int n) {
-    unsigned int divisor = 10000;
-    unsigned char started = 0;
-
-    if (n == 0) {
-        uart_write_char('0');
-        return;
-    }
-
-    while (divisor > 0) {
-        unsigned int digit = n / divisor;
-        if (digit > 0 || started) {
-            uart_write_char('0' + digit);
-            started = 1;
-        }
-        n %= divisor;
-        divisor /= 10;
-    }
-}
-
-void uart_write_string(char *str) {
-    while (*str != '\0') {
-        uart_write_char(*str);
-        str++;
-    }
-
-    //uart_newline();
-}
-
-void uart_write_charln(unsigned char ch) {
-    uart_write_char(ch);
-    uart_newline();
-}
-
-
-// The function returns the byte; if none received, returns null character
-unsigned char uart_read_char(void){
-    unsigned char temp;
-    // Return null character (ASCII=0) if no byte was received
-    if( (FLAGS & RXFLAG) == 0)
-        return 0;
-
-    // Otherwise, copy the received byte (this clears the flag) and return it
-    temp = RXBUFFER;
-    return temp;
-}
-
-
-char* uart_read_string()
-{
-    unsigned int i = 0;
-    static char buffer[32];
-
-    while (i < 32) {
-        unsigned char c = uart_read_char();
-
-        // no byte received yet
-        if (c == 0) {
-            continue;
-        }
-
-        // end of line
-        if (c == '\n' || c == '\r') {
-            break;
-        }
-
-        buffer[i++] = c;
-    }
-
-    // null-terminate
-    buffer[i] = '\0';           // null-terminate
-
-    return buffer;
-}
-
-// Configure UART to the popular configuration
-// 9600 baud, 8-bit data, LSB first, no parity bits, 1 stop bit
-// no flow control, oversampling reception
-// Clock: 16 MHz (16,000,000 Hz)
-void Initialize_UART(void){
-    P3SEL0 |=  BIT4 | BIT5; // USCI_A1 UART pins
-    P3SEL1 &= ~(BIT4 | BIT5);
-
-    UCA1CTLW0 = UCSWRST;
-    UCA1CTLW0 |= UCSSEL__SMCLK;
-
-    // 16,000,000 / 9600 = 1666.666
-    // Using Oversampling (UCOS16 = 1):
-    // 1666.666 / 16 = 104.166 -> UCBR = 104
-    // Fractional portion 0.166 -> UCBRF = 2 (from table)
-    UCA1BRW    = 104;
-    UCA1MCTLW  = 0xD600 | UCOS16 | UCBRF_2; // 0xD6 is UCBRS = 0xD6
-
-    UCA1CTLW0 &= ~UCSWRST;
-}
-
-void clock_system_initialize_16MHz(void)
-{
-    FRCTL0  = FRCTLPW | NWAITS_1;
-    CSCTL0  = CSKEY;
-    CSCTL1  = DCOFSEL_4 | DCORSEL; // Set DCO to 16MHz
-    CSCTL2  = SELA__LFXTCLK | SELS__DCOCLK | SELM__DCOCLK;
-    CSCTL3  = DIVA__1 | DIVS__1 | DIVM__1; // No dividers = SMCLK @ 16MHz
-    CSCTL0_H = 0;
-}
-
-void config_ACLK_to_32KHz_crystal(void) {
-    // By default, ACLK runs on LFMODCLK at 5MHz/128 = 39 KHz
-
-    // Reroute pins to LFXIN/LFXOUT functionality
-    PJSEL1 &= ~BIT4;
-    PJSEL0 |= BIT4;
-
-    // Wait until the oscillator fault flags remain cleared
-    CSCTL0 = CSKEY; // Unlock CS registers
-
-    do {
-        CSCTL5 &= ~LFXTOFFG; // Local fault flag
-        SFRIFG1 &= ~OFIFG; // Global fault flag
-    } while((CSCTL5 & LFXTOFFG) != 0);
-
-
-    CSCTL0_H = 0; // Lock CS registers
-    return;
-}
-
-void adc_initialize(void)
-{
-    // Configure Pins: P9.2 (A10) and P8.7 (A4)
-    P9SEL1 |= BIT2;  P9SEL0 |= BIT2;
-    P8SEL1 |= BIT7;  P8SEL0 |= BIT7;
-
+//adc
+void adc_initialize(void) {
+    P9SEL1 |= BIT2; P9SEL0 |= BIT2;
+    P8SEL1 |= BIT7; P8SEL0 |= BIT7;
     ADC12CTL0 &= ~ADC12ENC;
-    // SHT_7 = 192 cycles for sampling (more stable), MSC = Multiple Sample Conversion
     ADC12CTL0  = ADC12ON | ADC12SHT0_7 | ADC12MSC;
-    // CONSEQ_1 = Sequence of channels A10 then A4
     ADC12CTL1  = ADC12SHP | ADC12CONSEQ_1;
-    ADC12CTL2  = ADC12RES_2; // 12-bit resolution
-
-    // Map Memory 0 to A10 (X) and Memory 1 to A4 (Y)
+    ADC12CTL2  = ADC12RES_2;
     ADC12MCTL0 = ADC12INCH_10;
-    ADC12MCTL1 = ADC12INCH_4 | ADC12EOS; // EOS = End of Sequence
-
+    ADC12MCTL1 = ADC12INCH_4 | ADC12EOS;
     ADC12CTL0 |= ADC12ENC;
-
     ADC12IER0 |= ADC12IE0 | ADC12IE1;
 
-    // Timer for ADC Trigger (~10Hz)
     TA0CCR0   = 3276;
     TA0CCTL0 |= CCIE;
     TA0CTL    = TASSEL_1 | MC_1 | TACLR;
 }
-
-
-
-unsigned long prng_state;
-unsigned int random_number(int max) {
-    //https://en.wikipedia.org/wiki/Linear_congruential_generator
-    prng_state = (1664525UL * prng_state + 1013904223UL);
-    return abs(prng_state) % max;
-}
-
-
-void setup_prng() {
-    prng_state = 0;
-}
-
-// Will determine the sequence of the notes to play from 1-7
-
-unsigned int[] generate_sequence(unsigned int sequence[]) {
-    int i;
-    for (i = 0; i < 3; i++) {
-        sequence[i] = random_number(7);
-
-        // Ensure no duplicates
-        if (i > 0 && sequence[i] == sequence[i-1]) {
-            // repeat loop without increment
-            i--;
-            continue;
-        }
-    }
-    return sequence;
-
-    static const int print = 0;
-    if (!print) return;
-
-    for (i = 0; i < 3; i++) {
-        uart_write_uint16(sequence[i]);
-        uart_newline();
-    }
-}
-
-/*
- * Clock cycles is found by dividing 32khz by frequency *2 (square wave)
- * */
-int note_to_clk_cycles_16MHZ[7] = {
-    18181, // A4
-    16200, // B4
-    15288, // C5
-    13619, // D5
-    12133, // E5
-    11448, // F5
-    10200  // G5
-};
-
 void config_clk() {
     // Configure Channel 0 for up mode with interrupts
     TB0CCR0 = note_to_clk_cycles_16MHZ[0]; //@ 32KHz, 1 second = 2^16
@@ -326,252 +89,191 @@ void config_clk() {
     TB0CTL = TBSSEL_2 | ID_0 | MC_0 | TBCLR ;
 }
 
-void config_Aclk(){
-    TA0CCR0   = 3276;
-    TA0CCTL0 |= CCIE;
-    TA0CTL    = TASSEL_1 | MC_1 | TACLR;
-    TA0CCTL0 &= ~CCIFG;
-}
-
+//music stuff --------------------------------------------------------------------------------------------------------music stuff
+unsigned long prng_state;
 void config_piezo() {
     P2DIR  |= BIT7;
 }
-
+unsigned int random_number(int max) {
+    //https://en.wikipedia.org/wiki/Linear_congruential_generator
+    prng_state = (1664525UL * prng_state + 1013904223UL);
+    return abs(prng_state) % max;
+}
+void setup_prng() {
+    prng_state = 0;
+}
 void play_note(int note) {
-    // Turn timer on
     TB0CTL |= MC_1;
     TB0CCR0 = note_to_clk_cycles_16MHZ[note];
 }
-
 void stop_note() {
-    // Turn timer off
     TB0CTL = (TB0CTL & ~MC_3);
 }
-
-unsigned int generate_answer(unsigned int s[], unsigned int a[]){
-    if (s[1]>s[0]){
-        a[0]=1;
-    }
-    else{
-        a[0]=0;
-    }
-
-    if (s[1]>s[2]){
-        a[1]=0;
-    }
-    else{
-        a[1]=1;
-    }
-
-}
-
-void play_round() {
-    // Generate sequence
-    unsigned int sequence[3] = {0};
-    generate_sequence(sequence);
-
-    // Generate answers
-    unsigned int answer[2] = {0};
-    genereate_answer(sequence, answer);
-
-    // play sequence
-    Graphics_drawStringCentered(&g_sContext, "Score:", AUTO_STRING_LENGTH, 44, 10, OPAQUE_TEXT);
-    unsigned char score_str = score + "\0";
-    Graphics_drawStringCentered(&g_sContext, score_str, AUTO_STRING_LENGTH, 64, 10, OPAQUE_TEXT);
-    Graphics_drawStringCentered(&g_sContext, "Playing notes", AUTO_STRING_LENGTH, 64, 30, OPAQUE_TEXT);
+void generate_sequence(unsigned int sequence[] ) {
     int i;
     for (i = 0; i < 3; i++) {
-        // Printing
-        uart_write_string("Playing note: ");
-        uart_write_uint16(sequence[i]);
-        uart_newline();
+        sequence[i] = random_number(7);
 
-        joystick_setting = 2;
-
-        play_note(sequence[i]);
-        _delay_cycles(5000000);
-        stop_note();
-        _delay_cycles(5000000);
-    }
-
-    //evaluate user input
-    if ((answer[0] == user_answer[0]) && (answer[1] == user_answer[1])){
-        score += 1;
-        Graphics_drawStringCentered(&g_sContext, "OKAY MOZART!", AUTO_STRING_LENGTH, 64, 30, OPAQUE_TEXT);
-        Graphics_drawStringCentered(&g_sContext, "CORRECT!", AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
-    }
-    else{
-        Graphics_drawStringCentered(&g_sContext, ":P", AUTO_STRING_LENGTH, 64, 30, OPAQUE_TEXT);
-        Graphics_drawStringCentered(&g_sContext, "WRONG!", AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
-    }
-
-    // Return the answers
-    uart_write_string("Correct Answer is: ");
-    uart_write_uint16(answer[0]);
-    uart_write_string(", ");
-    uart_write_uint16(answer[1]);
-    uart_newline();
-
-
-}
-
-void set_graphics(){
-    // Graphics functions
-    Crystalfontz128x128_Init();         // Initialize the display
-
-    // Set the screen orientation
-    Crystalfontz128x128_SetOrientation(0);
-
-    // Initialize the context
-    Graphics_initContext(&g_sContext, &g_sCrystalfontz128x128);
-
-    // Set background and foreground colors
-    Graphics_setBackgroundColor(&g_sContext, GRAPHICS_COLOR_BLACK);
-    Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_WHITE);
-
-    // Set the default font for strings
-    GrContextFontSet(&g_sContext, &g_sFontFixed6x8);
-
-    //Clear the screen
-    Graphics_clearDisplay(&g_sContext);
-}
-
-
-
-void start_menu(){
-    Graphics_drawStringCentered(&g_sContext, "Choose Number of Rounds", AUTO_STRING_LENGTH, 64, 30, OPAQUE_TEXT);
-
-    TA0CCTL0 |= CCIE;
-    joystick_setting = 1;
-    if (status_x && POS){
-        rounds++;
-    }
-    else if (status_x && NEG){
-        rounds--;
-    }
-    if (rounds<0){
-        rounds = 0;
-    }
-
-    the_game();
-}
-
-void the_game(){
-    play_round;
-    if(button_state == 1){
-        button_state = 0;
-        for(int i =0; i<rounds; i++){
-            play_round();
+        // Ensure no duplicates
+        if (i > 0 && sequence[i] == sequence[i-1]) {
+            // repeat loop without increment
+            i--;
+            continue;
         }
+    }
+}
+
+void sequence_answer(unsigned int sequence[]){
+    unsigned int answer[]={0};
+    if(sequence[1]>sequence[0]){
+        answer[0] = 1;
+    }
+    if(sequence[1]<sequence[0]){
+            answer[0] = 0;
+        }
+    if(sequence[2]>sequence[1]){
+            answer[1] = 1;
+        }
+    if(sequence[2]<sequence[1]){
+            answer[1] = 0;
+        }
+}
+
+//game functions------------------------------------------------------------------------------------------------------game functions
+void start_menu(){
+    char buffer[10]={0};
+    // Convert number to string
+    sprintf(buffer, "%d", rounds);
+    // Draw the string on the screen
+    Graphics_drawStringCentered(&g_sContext,(int8_t *)buffer, AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
+}
+
+void play_game(){
+    int r = 0;
+    for (r=0; r<rounds; r++){
+        Graphics_clearDisplay(&g_sContext);
+        generate_sequence(sequence);
+        sequence_answer(answer);
+
+        int i;
+        for (i = 0; i < 3; i++) {
+            //display note
+            char str[10]={0};
+            sprintf(str, "%d", i);
+            Graphics_drawStringCentered(&g_sContext, "note: ", AUTO_STRING_LENGTH, 64, 30, OPAQUE_TEXT);
+            Graphics_drawStringCentered(&g_sContext,(int8_t *)str, AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
+
+            play_note(sequence[i]);
+            _delay_cycles(5000000);
+            stop_note();
+            _delay_cycles(5000000);
+
+            //print answer
+            char buffer[10]={0};
+            sprintf(buffer, "%d", answer[i]);
+            Graphics_drawStringCentered(&g_sContext,(int8_t *)buffer, AUTO_STRING_LENGTH, 64, 70, OPAQUE_TEXT);
+        }
+    Graphics_clearDisplay(&g_sContext);
+    rounds = 0;
     }
 }
 
 void main(void)
 {
-    WDTCTL = WDTPW | WDTHOLD;   // stop watchdog timer
-    PM5CTL0 &= ~LOCKLPM5; // Disable GPIO power-on default high-impedance mode
+    WDTCTL = WDTPW | WDTHOLD;
+    PM5CTL0 &= ~LOCKLPM5;
 
-    // Generate sequence of 3 notes. Use as many as needed
-    setup_prng();
-
-    // Init clk and piezo
-    clock_system_initialize_16MHz();
-    // Uart and piezo
-    Initialize_UART();
-    config_clk();
+    //itialize stuff
+    setup_prng(); //starting three notes
+    Initialize_Clock_System; //clock for who knows what
     config_piezo(); // Default tone of 440
-    config_Aclk();
-    // ADC
+    config_clk(); //timerB
     adc_initialize();
-    //Graphics
     set_graphics();
-    void start_menu();
+
+    //configure buttons
+    P1DIR &= ~(BUT1|BUT2); // 0: input
+    P1REN |= (BUT1|BUT2); // 1: enable built-in resistors
+    P1OUT |= (BUT1|BUT2); // 1: built-in resistor is pulled up to Vcc
+    P1IES |= (BUT1|BUT2); // 1: interrupt on falling edge (0 for rising edge)
+    P1IFG &= ~(BUT1|BUT2); // 0: clear the interrupt flags
+    P1IE |= (BUT1|BUT2); // 1: enable the interrupts
 
     _enable_interrupts();
-    //if want to start over
-    if(button2_state ==1){
-        Graphics_clearDisplay(&g_sContext);
-        button2_state=0;
-        button_state=0;
-        void start_menu();
+    while(1){
+        Graphics_drawStringCentered(&g_sContext, "Choose Rounds", AUTO_STRING_LENGTH, 64, 30, OPAQUE_TEXT);
+        if(!button_state || button2_state){
+            Graphics_drawStringCentered(&g_sContext, "Choose Rounds", AUTO_STRING_LENGTH, 64, 30, OPAQUE_TEXT);
+            Graphics_drawStringCentered(&g_sContext, "Press S1 to Start", AUTO_STRING_LENGTH, 64, 100, OPAQUE_TEXT);
+            button2_state =0;
+            _enable_interrupts();
+            start_menu();
         }
+
+        if(button_state && !button2_state){
+            button_state = 0;
+            play_game();
+        }
+    }
 }
 
-//******* PIEZO SQUARE WAVE *******
-#pragma vector = TIMER0_B0_VECTOR // Link the ISR to the vector
-__interrupt void T0B0_ISR() {
-    // Interrupt response goes here
-    P2OUT ^= BIT7; // toggle piezo which gives square wave
+#pragma vector = TIMER0_B0_VECTOR
+__interrupt void T0_B0_ISR() {
+    P2OUT ^= BIT7;
 }
 
-
-//******* UPDATE ADC *******
 #pragma vector = TIMER0_A0_VECTOR
-__interrupt void TA0_A0_ISR(void)
-{
-    ADC12CTL0 |= ADC12SC; // Trigger ADC
+__interrupt void TA0_A0_ISR() {
+  ADC12CTL0 |= ADC12SC;
+  return;
 }
 
+//gets joystick info
 #pragma vector = ADC12_VECTOR
 __interrupt void ADC12_ISR(void)
 {
-    if (joystick_setting == 1){
-        if (ADC12IFGR0 & ADC12IFG0)
-        {
-            result_x = (ADC12MEM0/4096.0*200);//convert
-            delta_x  = (result_x >= 100) ? result_x - 100 : 100 - result_x;
-            status_x = 0;
-            if(result_x > 100 + LOW_THRESHOLD){
-                status_x |= POS;
-            }
-            else if(result_x < 100 - LOW_THRESHOLD){
-                status_x |= NEG;
-            }
-            if(delta_x > HIG_THRESHOLD){
-                status_x |= HIG;
-            }
-            else if(delta_x > MED_THRESHOLD){
-                status_x |= MED;
-            }
-            else{
-                status_x |= LOW;
-            }
-
+    if (ADC12IFGR0 & ADC12IFG0)
+    {
+        result_x =(uint16_t)(((uint32_t)ADC12MEM0 * 200) >> 12);
+        if (result_x > 160) {
+            rounds++;
+            __delay_cycles(1000000); // Simple debounce
+        }
+        if (result_x < 40 && rounds > 0) {
+            rounds--;
+            __delay_cycles(1000000); // Simple debounce
         }
     }
 
-    if(joystick_setting == 2){
-        if (ADC12IFGR0 & ADC12IFG1)
-        {
-            result_y = (ADC12MEM1/4096.0*200);
-            delta_y  = (result_y >= 100) ? result_y - 100 : 100 - result_y;
-            status_y = 0;
-            if(result_y > 100 + LOW_THRESHOLD){
-                status_y |= POS;
-            }
-            else if(result_y < 100 - LOW_THRESHOLD){
-                status_y |= NEG;
-            }
-
-            if (status_y == POS){
-                user_answer[] += 1;
-            }
-            else if (status_y == NEG){
-                user_answer[] += 0;
-            }
+    if (ADC12IFGR0 & ADC12IFG1)
+    {
+        result_y = ADC12MEM1*200/4096;
+        status_y = 0;
+        if(result_y > 100 + LOW_THRESHOLD){
+            status_y |= POS;
+        }
+        else if(result_y < 100 - LOW_THRESHOLD){
+            status_y |= NEG;
+        }
     }
+
 }
-}
+
+//to commence game from start menu
 #pragma vector = PORT1_VECTOR
 __interrupt void Port1_ISR(void){
     P1IE &= ~BUT1;
-    _delay_cycles(40000);     // wait for bounce to finish
+    _delay_cycles(40000);
 
     if(P1IFG & BUT1){
         button_state = 1;
         P1IFG &= ~BUT1;
     }
+
+    if(P1IFG & BUT2){
+        button2_state = 1;
+        button_state = 0;
+        game_start=0;
+        P1IFG &= ~BUT2;
+    }
 }
-
-
-
