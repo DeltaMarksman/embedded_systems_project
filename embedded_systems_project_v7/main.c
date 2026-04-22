@@ -42,6 +42,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+
 #define FLAGS UCA1IFG // Contains the transmit & receive flags
 #define RXFLAG UCRXIFG // Receive flag
 #define TXFLAG UCTXIFG // Transmit flag
@@ -77,7 +78,8 @@ int result_x, result_y;
 int delta_x,  delta_y;
 int status_x, status_y;
 int update_flag         = 0; // Flag to trigger screen update
-int joystick_moved      = 0;
+int joystick_is_up      = 0;
+int joystick_is_down    = 0;
 int rounds              = 0;
 
 
@@ -394,13 +396,9 @@ void display_incorrect() {
 void display_final_results(int num_correct) {
     char buff[10];
     sprintf(buff, "%d", num_correct);
-    Graphics_drawStringCentered(&g_sContext,(int8_t *)buff, AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
-    Graphics_drawStringCentered(&g_sContext,"/", AUTO_STRING_LENGTH, 70, 50, OPAQUE_TEXT);
-    char roun[10];
-    sprintf(roun, "%d", rounds);
-    Graphics_drawStringCentered(&g_sContext,(int8_t *)roun, AUTO_STRING_LENGTH, 74, 50, OPAQUE_TEXT);
-    
+    Graphics_drawStringCentered(&g_sContext,(int8_t*)buff, AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
 }
+
 
 void main(void)
 {
@@ -440,9 +438,27 @@ void main(void)
         // Waiting on user input to drive answer_input
         game_state = WAITING_ON_ANSWER;
         int answer_input[2];
+        int answer_input_index = 0;
 
         // Wait for input
-        while (game_start == WAITING_ON_ANSWER) {}
+        while (game_start == WAITING_ON_ANSWER) {
+            if (answer_input_index > 1) {
+                game_start = DISPLAY_FEEDBACK;
+                break;
+            }
+
+            if (joystick_is_up){
+                answer_input[answer_input_index] = 1;
+                while (joystick_is_up) {}
+                answer_input_index++;
+            }
+
+            if (joystick_is_down){
+                answer_input[answer_input_index] = 1;
+                while (joystick_is_up) {}
+                answer_input_index++;
+            }
+        }
 
 
         // Display feedback
@@ -477,16 +493,8 @@ __interrupt void TA0_A0_ISR(void)
 #pragma vector = ADC12_VECTOR
 __interrupt void ADC12_ISR(void)
 {
-    if (ADC12IFGR0 & ADC12IFG0)
-    {
-        result_x = (uint16_t)(((uint32_t)ADC12MEM0 * 25) >> 9);
-        delta_x  = (result_x >= 100) ? result_x - 100 : 100 - result_x;
-        status_x = 0;
-        if      (result_x > 100 + LOW_THRESHOLD) status_x |= POS;
-        else if (result_x < 100 - LOW_THRESHOLD) status_x |= NEG;
-        if      (delta_x > HIG_THRESHOLD) status_x |= HIG;
-        else if (delta_x > MED_THRESHOLD) status_x |= MED;
-        else                              status_x |= LOW;
+    if ((game_state != CHOOSING_ROUNDS) && (game_state != WAITING_ON_ANSWER)) {
+        return;
     }
 
     if (ADC12IFGR0 & ADC12IFG1)
@@ -500,4 +508,8 @@ __interrupt void ADC12_ISR(void)
         else if (delta_y > MED_THRESHOLD) status_y |= MED;
         else                              status_y |= LOW;
     }
+
+
+    joystick_is_up = status_y && HIG;
+    joystick_is_down = status_y && LOW;
 }
