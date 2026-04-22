@@ -28,6 +28,15 @@ volatile int user_answer[2] = {0};
 Graphics_Context g_sContext;
 int note_to_clk_cycles_16MHZ[7] = {18181, 16200, 15288, 13619, 12133, 11448, 10200};
 
+typedef enum {
+    CHOOSING_ROUNDS,
+    PLAYING_NOTES,
+    WAITING_ON_ANSWER,
+    DISPLAY_FEEDBACK,
+    DISPLAY_FINAL_RESULTS,
+} game_state_t;
+
+
 
 //clock for what??
 void Initialize_Clock_System() {
@@ -234,30 +243,35 @@ __interrupt void TA0_A0_ISR() {
 #pragma vector = ADC12_VECTOR
 __interrupt void ADC12_ISR(void)
 {
-    if (ADC12IFGR0 & ADC12IFG0)
-    {
-        result_x =(uint16_t)(((uint32_t)ADC12MEM0 * 200) >> 12);
-        if (result_x > 160) {
-            rounds++;
-            __delay_cycles(1000000); // Simple debounce
+    switch(game_state_t)
+    case CHOOSING_ROUNDS:
+        if (ADC12IFGR0 & ADC12IFG0)
+        {
+            result_x =(uint16_t)(((uint32_t)ADC12MEM0 * 200) >> 12);
+            if (result_x > 160) {
+                rounds++;
+                __delay_cycles(1000000); // Simple debounce
+            }
+            if (result_x < 40 && rounds > 0) {
+                rounds--;
+                __delay_cycles(1000000); // Simple debounce
+            }
         }
-        if (result_x < 40 && rounds > 0) {
-            rounds--;
-            __delay_cycles(1000000); // Simple debounce
-        }
-    }
+    break;
 
-    if (ADC12IFGR0 & ADC12IFG1)
-    {
-        result_y = ADC12MEM1*200/4096;
-        status_y = 0;
-        if(result_y > 100 + LOW_THRESHOLD){
-            status_y |= POS;
+    case WAITING_ON_ANSWER:
+        if (ADC12IFGR0 & ADC12IFG1)
+        {
+            result_y = ADC12MEM1*200/4096;
+            status_y = 0;
+            if(result_y > 100 + LOW_THRESHOLD){
+                status_y |= POS;
+            }
+            else if(result_y < 100 - LOW_THRESHOLD){
+                status_y |= NEG;
+            }
         }
-        else if(result_y < 100 - LOW_THRESHOLD){
-            status_y |= NEG;
-        }
-    }
+    break; 
 
 }
 
