@@ -378,15 +378,19 @@ int check_answer(int* answer, int* answer_input) {
 }
 
 void display_correct() {
-
+    Graphics_clearDisplay(&g_sContext);
+    Graphics_drawStringCentered(&g_sContext,"CORRECT!", AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
 }
 
 void display_incorrect() {
-
+    Graphics_clearDisplay(&g_sContext);
+    Graphics_drawStringCentered(&g_sContext,"WRONG!", AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
 }
 
 void display_final_results(int num_correct) {
-    
+    char buff[10];
+    sprintf(buff, "%d", num_correct);
+    Graphics_drawStringCentered(&g_sContext,(int8_t*)num_correct, AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
 }
 
 void main(void)
