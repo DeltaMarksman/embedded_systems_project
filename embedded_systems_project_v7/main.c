@@ -336,7 +336,7 @@ void stop_note() {
     TB0CTL = (TB0CTL & ~MC_3);
 }
 
-void play_round() {
+int* play_round() {
     // Generate sequence
     unsigned int sequence[3] = {0};
     generate_sequence(sequence);
@@ -368,7 +368,25 @@ void play_round() {
     uart_write_uint16(answer[1]);
     uart_newline();
 
+    return answer;
 
+
+}
+
+int check_answer(int* answer, int* answer_input) {
+    return answer[0]==answer_input[0] && answer[1]==answer_input[1];
+}
+
+void display_correct() {
+
+}
+
+void display_incorrect() {
+
+}
+
+void display_final_results(int num_correct) {
+    
 }
 
 void main(void)
@@ -396,21 +414,35 @@ void main(void)
     
     // GAME START WITH CHOOSING ROUNDS
     game_state_t game_state = CHOOSING_ROUNDS;
-    while (game_state == CHOOSING_ROUNDS) {}
+    int num_correct = 0;
+    while (game_start == CHOOSING_ROUNDS) {}
 
     // PLAY NOTES FOR ROUND
     int round_index;
     for (round_index = 0, round_index < rounds; round_index++) {
         // Play notes
         game_state = PLAYING_NOTES
-        play_round();
+        int answer[2] = play_round();
 
+        // Waiting on user input to drive answer_input
         game_state = WAITING_ON_ANSWER;
-        int answer_input[];
-        check_answer(answer_input)
+        int answer_input[2];
+
+        // Wait for input
+        while (game_start == WAITING_ON_ANSWER) {}
+
+
+        // Display feedback
+        int round_result = check_answer(answer, answer_input);
+        if (round_result) {
+            display_correct()
+            num_correct++;
+        } else {
+            display_incorrect()
+        }
     }
 
-
+    display_final_results(num_correct)
 
 }
 
