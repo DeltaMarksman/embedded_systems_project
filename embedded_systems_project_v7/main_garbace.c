@@ -27,8 +27,7 @@ volatile uint8_t score = 0;
 volatile int user_answer[2] = {0};
 Graphics_Context g_sContext;
 int note_to_clk_cycles_16MHZ[7] = {18181, 16200, 15288, 13619, 12133, 11448, 10200};
-unsigned int sequence[3] = {0};
-unsigned int answer[2] = {0};
+
 
 //clock for what??
 void Initialize_Clock_System() {
@@ -152,8 +151,10 @@ void play_game(){
     int r = 0;
     for (r=0; r<rounds; r++){
         Graphics_clearDisplay(&g_sContext);
+        unsigned int sequence[3]={0};
         generate_sequence(sequence);
-        sequence_answer(answer);
+        int answer[2] = {sequence[1] > sequence[0], sequence[2] > sequence[1]};
+
 
         int i;
         for (i = 0; i < 3; i++) {
@@ -185,7 +186,7 @@ void main(void)
 
     //itialize stuff
     setup_prng(); //starting three notes
-    Initialize_Clock_System; //clock for who knows what
+    Initialize_Clock_System(); //clock for who knows what
     config_piezo(); // Default tone of 440
     config_clk(); //timerB
     adc_initialize();
@@ -214,6 +215,7 @@ void main(void)
             button_state = 0;
             play_game();
         }
+
     }
 }
 
