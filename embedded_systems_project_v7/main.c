@@ -69,11 +69,22 @@
 #define HIG_THRESHOLD  80
 
 // Globals
-volatile uint16_t result_x, result_y;
-volatile uint16_t delta_x,  delta_y;
-volatile uint8_t  status_x, status_y;
-volatile uint8_t  update_flag = 0; // Flag to trigger screen update
-volatile uint8_t joystick_moved = 0;
+int result_x, result_y;
+int delta_x,  delta_y;
+int status_x, status_y;
+int update_flag         = 0; // Flag to trigger screen update
+int joystick_moved      = 0;
+int rounds              = 0;
+
+
+typedef enum {
+    CHOOSING_ROUNDS,
+    STARTING_GAME,
+    PLAYING_NOTES,
+    WAITING_ON_ANSWER,
+    DISPLAY_FEEDBACK,
+    DISPLAY_FINAL_RESULTS,
+} game_state_t;
 
 // Prototypes
 void clock_system_initialize_16MHz(void);
@@ -382,13 +393,25 @@ void main(void)
 
     _enable_interrupts();
 
-    play_round();
+    
+    // GAME START WITH CHOOSING ROUNDS
+    game_state_t game_state = CHOOSING_ROUNDS;
+    while (game_state == CHOOSING_ROUNDS) {}
 
-    while (1) {
-        if (status_y & HIG) {
-            uart_write_string((status_y & POS) ? "Up  " : "Down");
-        }
+    // PLAY NOTES FOR ROUND
+    int round_index;
+    for (round_index = 0, round_index < rounds; round_index++) {
+        // Play notes
+        game_state = PLAYING_NOTES
+        play_round();
+
+        game_state = WAITING_ON_ANSWER;
+        int answer_input[];
+        check_answer(answer_input)
     }
+
+
+
 }
 
 //******* PIEZO SQUARE WAVE *******
