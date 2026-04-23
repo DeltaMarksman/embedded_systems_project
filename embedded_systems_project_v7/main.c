@@ -73,6 +73,10 @@
 #define MED_THRESHOLD  40
 #define HIG_THRESHOLD  80
 
+//buttons
+#define BUT1 BIT1 //S1 when pressed after user as indicated number of rounds will initiate the game rounds
+#define BUT2 BIT2 //S2 when pressed allows user to start over to start menu
+
 // Globals
 int result_x, result_y;
 int delta_x,  delta_y;
@@ -81,6 +85,7 @@ int update_flag         = 0; // Flag to trigger screen update
 int joystick_is_up      = 0;
 int joystick_is_down    = 0;
 int rounds              = 0;
+Graphics_Context g_sContext;
 
 
 typedef enum {
@@ -91,6 +96,7 @@ typedef enum {
     DISPLAY_FEEDBACK,
     DISPLAY_FINAL_RESULTS,
 } game_state_t;
+game_state_t game_state = CHOOSING_ROUNDS;
 
 // Prototypes
 void clock_system_initialize_16MHz(void);
@@ -265,7 +271,15 @@ void adc_initialize(void)
     TA0CTL    = TASSEL_1 | MC_1 | TACLR;
 }
 
-
+void set_graphics() {
+    Crystalfontz128x128_Init();
+    Crystalfontz128x128_SetOrientation(0);
+    Graphics_initContext(&g_sContext, &g_sCrystalfontz128x128);
+    Graphics_setBackgroundColor(&g_sContext, GRAPHICS_COLOR_BLACK);
+    Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_WHITE);
+    GrContextFontSet(&g_sContext, &g_sFontFixed6x8);
+    Graphics_clearDisplay(&g_sContext);
+}
 
 unsigned long prng_state;
 unsigned int random_number(int max) {
@@ -337,18 +351,24 @@ void play_note(int note) {
     TB0CCR0 = note_to_clk_cycles_16MHZ[note];
 }
 
+void play_frequency(int frequency) {
+    // Turn timer on
+    TB0CTL |= MC_1;
+    TB0CCR0 = frequency;
+}
+
 void stop_note() {
     // Turn timer off
     TB0CTL = (TB0CTL & ~MC_3);
 }
 
-int* play_round() {
+void play_round(int answer[]) {
     // Generate sequence
     unsigned int sequence[3] = {0};
     generate_sequence(sequence);
 
     // Generate answers
-    int answer[2] = {sequence[1] > sequence[0], sequence[2] > sequence[1]};
+    int round_answer[2] = {sequence[1] > sequence[0], sequence[2] > sequence[1]};
 
 
 
@@ -369,34 +389,99 @@ int* play_round() {
 
     // Return the answers
     uart_write_string("Correct Answer is: ");
-    uart_write_uint16(answer[0]);
+    uart_write_uint16(round_answer[0]);
     uart_write_string(", ");
-    uart_write_uint16(answer[1]);
+    uart_write_uint16(round_answer[1]);
     uart_newline();
 
-    return answer;
-
-
+    answer[0] = round_answer[0];
+    answer[1] = round_answer[1];
 }
 
-int check_answer(int* answer, int* answer_input) {
-    return answer[0]==answer_input[0] && answer[1]==answer_input[1];
+int check_answer(int answer[], int answer_input[]) {
+    return (answer[0]==answer_input[0]) && (answer[1]==answer_input[1]);
 }
 
 void display_correct() {
     Graphics_clearDisplay(&g_sContext);
-    Graphics_drawStringCentered(&g_sContext,"CORRECT!", AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
+    Graphics_drawStringCentered(&g_sContext, "CORRECT!", AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
+    uart_write_string("CORRECT!");
 }
 
 void display_incorrect() {
     Graphics_clearDisplay(&g_sContext);
     Graphics_drawStringCentered(&g_sContext,"WRONG!", AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
+    uart_write_string("WRONG!");
 }
 
 void display_final_results(int num_correct) {
+    Graphics_clearDisplay(&g_sContext);
     char buff[10];
-    sprintf(buff, "%d", num_correct);
-    Graphics_drawStringCentered(&g_sContext,(int8_t*)buff, AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
+    sprintf(buff, "%d/%d", num_correct, rounds);
+    Graphics_drawStringCentered(&g_sContext,(int8_t*)buff, AUTO_STRING_LENGTH, 60, 50, OPAQUE_TEXT);
+}
+
+void play_kirk() {
+
+    // A
+    play_note(0);
+    _delay_cycles(10000000);
+    stop_note();
+    _delay_cycles(100000);
+
+    // A
+    play_note(0);
+    _delay_cycles(10000000);
+    stop_note();
+    _delay_cycles(100000);
+
+    // D
+    play_note(3);
+    _delay_cycles(15000000);
+    stop_note();
+    _delay_cycles(100000);
+
+    // E
+    play_note(4);
+    _delay_cycles(5000000);
+    stop_note();
+    _delay_cycles(100000);
+
+    // F
+    play_note(5);
+    _delay_cycles(30000000);
+    stop_note();
+    _delay_cycles(100000);
+
+    // F
+    play_note(5);
+    _delay_cycles(5000000);
+    stop_note();
+    _delay_cycles(100000);
+
+    // F
+    play_note(5);
+    _delay_cycles(30000000);
+    stop_note();
+    _delay_cycles(100000);
+
+    // E
+    play_note(4);
+    _delay_cycles(5000000);
+    stop_note();
+    _delay_cycles(100000);
+
+    // D
+    play_note(3);
+    _delay_cycles(10000000);
+    stop_note();
+    _delay_cycles(100000);
+
+    // Bb
+    play_frequency(17161);
+    _delay_cycles(40000000);
+    stop_note();
+    _delay_cycles(100000);
 }
 
 
@@ -416,34 +501,72 @@ void main(void)
     Initialize_UART();
     config_clk();
     config_piezo(); // Default tone of 440
+    set_graphics();
 
     // ADC
     adc_initialize();
 
+    //configure buttons
+    P1DIR &= ~(BUT1|BUT2); // 0: input
+    P1REN |= (BUT1|BUT2); // 1: enable built-in resistors
+    P1OUT |= (BUT1|BUT2); // 1: built-in resistor is pulled up to Vcc
+    P1IES |= (BUT1|BUT2); // 1: interrupt on falling edge (0 for rising edge)
+    P1IFG &= ~(BUT1|BUT2); // 0: clear the interrupt flags
+    P1IE |= (BUT1|BUT2); // 1: enable the interrupts
+
     _enable_interrupts();
 
-    
+    uart_write_string("Hello embedded world!");
+
+    play_kirk();
+
     // GAME START WITH CHOOSING ROUNDS
-    game_state_t game_state = CHOOSING_ROUNDS;
     int num_correct = 0;
-    while (game_start == CHOOSING_ROUNDS) {}
+    while (game_state == CHOOSING_ROUNDS) {
+        Graphics_drawStringCentered(&g_sContext,"Choose # Rounds" , AUTO_STRING_LENGTH, 64, 30, OPAQUE_TEXT);
+        if (joystick_is_up){
+            rounds++;
+            char choose[10];
+            sprintf(choose, "  %d  ", rounds);
+            Graphics_drawStringCentered(&g_sContext,(int8_t*)choose, AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
+
+            uart_write_string("Joystick is up");
+            while (joystick_is_up) {}
+
+        }
+        if (joystick_is_down){
+            if (rounds == 0) continue;
+            rounds--;
+            char choose[10];
+            sprintf(choose, "  %d  ", rounds);
+            Graphics_drawStringCentered(&g_sContext,(int8_t*)choose, AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
+
+            uart_write_string("Joystick is down");
+            while (joystick_is_down) {}
+        }
+    }
+    Graphics_clearDisplay(&g_sContext);
 
     // PLAY NOTES FOR ROUND
     int round_index;
-    for (round_index = 0, round_index < rounds; round_index++) {
+    for (round_index = 0; round_index < rounds; round_index++) {
         // Play notes
-        game_state = PLAYING_NOTES
-        int answer[2] = play_round();
+        game_state = PLAYING_NOTES;
+        int answer[2] = {0};
+        play_round(answer);
+        Graphics_clearDisplay(&g_sContext);
 
         // Waiting on user input to drive answer_input
         game_state = WAITING_ON_ANSWER;
+        Graphics_clearDisplay(&g_sContext);
+        Graphics_drawStringCentered(&g_sContext,"What is the sequence?", AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
         int answer_input[2];
         int answer_input_index = 0;
 
         // Wait for input
-        while (game_start == WAITING_ON_ANSWER) {
+        while (game_state == WAITING_ON_ANSWER) {
             if (answer_input_index > 1) {
-                game_start = DISPLAY_FEEDBACK;
+                game_state = DISPLAY_FEEDBACK;
                 break;
             }
 
@@ -451,27 +574,31 @@ void main(void)
                 answer_input[answer_input_index] = 1;
                 while (joystick_is_up) {}
                 answer_input_index++;
+                continue;
             }
 
             if (joystick_is_down){
-                answer_input[answer_input_index] = 1;
-                while (joystick_is_up) {}
+                answer_input[answer_input_index] = 0;
+                while (joystick_is_down) {}
                 answer_input_index++;
+                continue;
             }
         }
 
+        uart_write_uint16(answer_input[0]);
+        uart_write_uint16(answer_input[1]);
 
         // Display feedback
         int round_result = check_answer(answer, answer_input);
         if (round_result) {
-            display_correct()
+            display_correct();
             num_correct++;
         } else {
-            display_incorrect()
+            display_incorrect();
         }
     }
 
-    display_final_results(num_correct)
+    display_final_results(num_correct);
 
 }
 
@@ -481,7 +608,6 @@ __interrupt void T0B0_ISR() {
     // Interrupt response goes here
     P2OUT ^= BIT7; // toggle piezo which gives square wave
 }
-
 
 //******* UPDATE ADC *******
 #pragma vector = TIMER0_A0_VECTOR
@@ -493,8 +619,16 @@ __interrupt void TA0_A0_ISR(void)
 #pragma vector = ADC12_VECTOR
 __interrupt void ADC12_ISR(void)
 {
-    if ((game_state != CHOOSING_ROUNDS) && (game_state != WAITING_ON_ANSWER)) {
-        return;
+    if (ADC12IFGR0 & ADC12IFG0)
+    {
+        result_x = (uint16_t)(((uint32_t)ADC12MEM0 * 25) >> 9);
+        delta_x  = (result_x >= 100) ? result_x - 100 : 100 - result_x;
+        status_x = 0;
+        if      (result_x > 100 + LOW_THRESHOLD) status_x |= POS;
+        else if (result_x < 100 - LOW_THRESHOLD) status_x |= NEG;
+        if      (delta_x > HIG_THRESHOLD) status_x |= HIG;
+        else if (delta_x > MED_THRESHOLD) status_x |= MED;
+        else                              status_x |= LOW;
     }
 
     if (ADC12IFGR0 & ADC12IFG1)
@@ -507,9 +641,22 @@ __interrupt void ADC12_ISR(void)
         if      (delta_y > HIG_THRESHOLD) status_y |= HIG;
         else if (delta_y > MED_THRESHOLD) status_y |= MED;
         else                              status_y |= LOW;
+
+        joystick_is_up = (status_y & HIG) && (status_y & POS);
+        joystick_is_down = (status_y & HIG) && !(status_y & POS);
     }
 
+}
 
-    joystick_is_up = status_y && HIG;
-    joystick_is_down = status_y && LOW;
+#pragma vector = PORT1_VECTOR
+__interrupt void Port1_ISR(void){
+    _delay_cycles(40000);
+
+    if(P1IFG & BUT1){
+        P1IFG &= ~BUT1;
+        if (game_state == CHOOSING_ROUNDS){
+            game_state = PLAYING_NOTES;
+            Graphics_clearDisplay(&g_sContext);
+        }
+    }
 }
