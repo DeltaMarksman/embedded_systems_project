@@ -374,6 +374,8 @@ void play_round(int answer[]) {
 
     // play sequence
     int i;
+    Graphics_clearDisplay(&g_sContext);
+    Graphics_drawStringCentered(&g_sContext,"Playing...", AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
     for (i = 0; i < 3; i++) {
         // Printing
         uart_write_string("Playing note: ");
@@ -406,12 +408,14 @@ void display_correct() {
     Graphics_clearDisplay(&g_sContext);
     Graphics_drawStringCentered(&g_sContext, "CORRECT!", AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
     uart_write_string("CORRECT!");
+    _delay_cycles(50000000);
 }
 
 void display_incorrect() {
     Graphics_clearDisplay(&g_sContext);
     Graphics_drawStringCentered(&g_sContext,"WRONG!", AUTO_STRING_LENGTH, 64, 50, OPAQUE_TEXT);
     uart_write_string("WRONG!");
+    _delay_cycles(50000000);
 }
 
 void display_final_results(int num_correct) {
