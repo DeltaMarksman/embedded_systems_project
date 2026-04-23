@@ -90,7 +90,6 @@ Graphics_Context g_sContext;
 
 typedef enum {
     CHOOSING_ROUNDS,
-    STARTING_GAME,
     PLAYING_NOTES,
     WAITING_ON_ANSWER,
     DISPLAY_FEEDBACK,
